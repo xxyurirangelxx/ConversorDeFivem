@@ -2,35 +2,71 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Xml.Linq;
 
-namespace VehiclesMetaMerger
+namespace mmVehiclesMetaMerger
 {
     class Program
     {
-        // Mapeamento de nomes de arquivos para os nós que devem ser mesclados dentro deles.
-        private static readonly Dictionary<string, (string RootName, string[] ChildNodes)> MetaFileConfig = new Dictionary<string, (string, string[])>
+        // Estrutura para armazenar os nomes dos elementos a serem mesclados para cada tipo de arquivo meta.
+        private static readonly Dictionary<string, string[]> MergeTargets = new Dictionary<string, string[]>
         {
-            ["vehicles"] = ("CVehicleModelInfo__InitDataList", new[] { "InitDatas", "txdRelationships" }),
-            ["carcols"] = ("CVehicleModelInfoVarGlobal", new[] { "Kits", "Lights", "Sirens" }),
-            ["carvariations"] = ("CVehicleModelInfoVariation", new[] { "variationData" }),
-            ["handling"] = ("CHandlingDataMgr", new[] { "HandlingData" }),
-            ["vehiclelayouts"] = ("CVehicleMetadataMgr", new[] {
+            ["vehicles"] = new[] { "InitDatas", "txdRelationships" },
+            ["carcols"] = new[] { "Kits", "Lights", "Sirens" },
+            ["carvariations"] = new[] { "variationData" },
+            ["handling"] = new[] { "HandlingData" },
+            ["vehiclelayouts"] = new[] {
                 "AnimRateSets", "ClipSetMaps", "VehicleCoverBoundOffsetInfos", "BicycleInfos", "POVTuningInfos",
                 "EntryAnimVariations", "VehicleExtraPointsInfos", "DrivebyWeaponGroups", "VehicleDriveByAnimInfos",
                 "VehicleDriveByInfos", "VehicleSeatInfos", "VehicleSeatAnimInfos", "VehicleEntryPointInfos",
                 "VehicleEntryPointAnimInfos", "VehicleExplosionInfos", "VehicleLayoutInfos", "VehicleScenarioLayoutInfos",
                 "SeatOverrideAnimInfos", "InVehicleOverrideInfos", "FirstPersonDriveByLookAroundData"
-            })
+            }
         };
 
         static void Main(string[] args)
         {
-            Console.Title = "Conversor de Fivem para GTA";
-            WriteLineColor("LSPD:BR - Créditos: mmVehiclesMetaMerger por mmleczek.com para reective.com (convertido para C#)", ConsoleColor.Cyan);
+            Console.Title = "mmVehiclesMetaMerger by mmleczek.com | Convertido e Adaptado por LSPD:BR";
+            PrintColor("mmVehiclesMetaMerger by ", ConsoleColor.White, false);
+            PrintColor("mmleczek.com", ConsoleColor.Cyan, false);
+            PrintColor(" | Convertido e Adaptado para C# e PT-BR por ", ConsoleColor.White, false);
+            PrintColor("LSPD:BR", ConsoleColor.Cyan);
 
             ProgramStart();
-            AskForActionLoop();
+            MainLoop();
+        }
+
+        /// <summary>
+        /// Loop principal do programa que exibe o menu e processa a entrada do usuário.
+        /// </summary>
+        private static void MainLoop()
+        {
+            while (true)
+            {
+                Console.Clear();
+                ShowMenu();
+                Console.Write("Escolha uma ação (1 - 15): ");
+                string input = Console.ReadLine();
+
+                if (int.TryParse(input, out int choice) && choice >= 1 && choice <= 15)
+                {
+                    HandleChoice(choice);
+
+                    // Pausa para o usuário ver o resultado antes de limpar, exceto ao sair.
+                    if (choice != 15)
+                    {
+                        Console.WriteLine("\n\nPressione qualquer tecla para voltar ao menu...");
+                        Console.ReadKey(true);
+                    }
+                }
+                else
+                {
+                    PrintColor("Número inválido. O programa aceita apenas números no intervalo de 1 a 15.", ConsoleColor.Red);
+                    // Pausa para o usuário ver o erro antes de limpar.
+                    System.Threading.Thread.Sleep(2000);
+                }
+            }
         }
 
         /// <summary>
@@ -40,320 +76,393 @@ namespace VehiclesMetaMerger
         {
             try
             {
-                foreach (var key in MetaFileConfig.Keys)
-                {
-                    Directory.CreateDirectory($"{key}_meta");
-                }
-                Directory.CreateDirectory("output");
-                File.WriteAllText("errors.txt", string.Empty); // Limpa o log de erros na inicialização
+                Directory.CreateDirectory(Path.Combine(GetDir(), "vehicles_meta"));
+                Directory.CreateDirectory(Path.Combine(GetDir(), "carcols_meta"));
+                Directory.CreateDirectory(Path.Combine(GetDir(), "carvariations_meta"));
+                Directory.CreateDirectory(Path.Combine(GetDir(), "handling_meta"));
+                Directory.CreateDirectory(Path.Combine(GetDir(), "vehiclelayouts_meta"));
+                Directory.CreateDirectory(Path.Combine(GetDir(), "output"));
             }
             catch (Exception ex)
             {
-                WriteLineColor($"Erro ao inicializar diretórios: {ex.Message}", ConsoleColor.Red);
+                PrintColor($"Erro ao criar diretórios iniciais: {ex.Message}", ConsoleColor.Red);
             }
         }
 
         /// <summary>
-        /// Exibe o menu de opções para o usuário.
+        /// Exibe o menu de opções formatado no console.
         /// </summary>
-        private static void DisplayMenu()
+        private static void ShowMenu()
         {
-            Console.WriteLine("\n+-----------------------------------------------------------------+");
-            Console.WriteLine("| Escolha uma ação:                                               |");
-            Console.WriteLine("+-----------------------------------------------------------------+");
-            Console.WriteLine("| 1.  Mesclar vehicles.meta                                       |");
-            Console.WriteLine("| 2.  Mesclar carcols.meta                                        |");
-            Console.WriteLine("| 3.  Mesclar carvariations.meta                                  |");
-            Console.WriteLine("| 4.  Mesclar handling.meta                                       |");
-            Console.WriteLine("| 5.  Mesclar vehiclelayouts.meta                                 |");
-            Write("| 6.  "); WriteColor("Mesclar todos os anteriores", ConsoleColor.Cyan); Console.WriteLine("                                   |");
-            Write("| 7.  "); WriteColor("Importar todos vehicles.meta de um diretório", ConsoleColor.Magenta); Console.WriteLine("          |");
-            Write("| 8.  "); WriteColor("Importar todos carcols.meta de um diretório", ConsoleColor.Magenta); Console.WriteLine("           |");
-            Write("| 9.  "); WriteColor("Importar todos carvariations.meta de um diretório", ConsoleColor.Magenta); Console.WriteLine("     |");
-            Write("| 10. "); WriteColor("Importar todos handling.meta de um diretório", ConsoleColor.Magenta); Console.WriteLine("          |");
-            Write("| 11. "); WriteColor("Importar todos vehiclelayouts.meta de um diretório", ConsoleColor.Magenta); Console.WriteLine("    |");
-            Write("| 12. "); WriteColor("Importar todos os anteriores de um diretório", ConsoleColor.Magenta); Console.WriteLine("        |");
-            Write("| 13. "); WriteColor("Importar arquivos por pesquisa de um diretório", ConsoleColor.Magenta); Console.WriteLine("      |");
-            Write("| 14. "); WriteColor("Extrair nomes de modelos de vehicles.meta", ConsoleColor.Green); Console.WriteLine("           |");
-            Write("| 15. "); WriteColor("Sair", ConsoleColor.Red); Console.WriteLine("                                                     |");
-            Console.WriteLine("+-----------------------------------------------------------------+\n");
+            Console.WriteLine("\n+----+---------------------------------------------------------+");
+            Console.WriteLine("| ID | Ação                                                    |");
+            Console.WriteLine("+----+---------------------------------------------------------+");
+            Console.WriteLine("| 1  | Mesclar vehicles.meta                                   |");
+            Console.WriteLine("| 2  | Mesclar carcols.meta                                    |");
+            Console.WriteLine("| 3  | Mesclar carvariations.meta                              |");
+            Console.WriteLine("| 4  | Mesclar handling.meta                                   |");
+            Console.WriteLine("| 5  | Mesclar vehiclelayouts.meta                             |");
+            Console.Write("| 6  | "); PrintColor("Mesclar todos os anteriores", ConsoleColor.Cyan, false); Console.WriteLine("                         |");
+            Console.Write("| 7  | "); PrintColor("Importar todos os vehicles.meta de um diretório", ConsoleColor.Magenta, false); Console.WriteLine("     |");
+            Console.Write("| 8  | "); PrintColor("Importar todos os carcols.meta de um diretório", ConsoleColor.Magenta, false); Console.WriteLine("      |");
+            Console.Write("| 9  | "); PrintColor("Importar todos os carvariations.meta de um diretório", ConsoleColor.Magenta, false); Console.WriteLine(" |");
+            Console.Write("| 10 | "); PrintColor("Importar todos os handling.meta de um diretório", ConsoleColor.Magenta, false); Console.WriteLine("     |");
+            Console.Write("| 11 | "); PrintColor("Importar todos os vehiclelayouts.meta de um diretório", ConsoleColor.Magenta, false); Console.WriteLine(" |");
+            Console.Write("| 12 | "); PrintColor("Importar todos os anteriores de um diretório", ConsoleColor.Magenta, false); Console.WriteLine("        |");
+            Console.Write("| 13 | "); PrintColor("Importar outros arquivos de um diretório por pesquisa", ConsoleColor.Magenta, false); Console.WriteLine(" |");
+            Console.Write("| 14 | "); PrintColor("Extrair nomes de modelos dos arquivos vehicles.meta", ConsoleColor.Green, false); Console.WriteLine(" |");
+            Console.Write("| 15 | "); PrintColor("Sair", ConsoleColor.Red, false); Console.WriteLine("                                                 |");
+            Console.WriteLine("+----+---------------------------------------------------------+\n");
         }
 
         /// <summary>
-        /// Loop principal que exibe o menu e processa a entrada do usuário.
+        /// Direciona a escolha do usuário para a função correspondente.
         /// </summary>
-        private static void AskForActionLoop()
+        private static void HandleChoice(int choice)
         {
-            while (true)
+            string dirPath;
+            switch (choice)
             {
-                DisplayMenu();
-                Console.Write("Escolha uma ação (1 - 15): ");
-                string input = Console.ReadLine();
-
-                if (int.TryParse(input, out int choice) && choice >= 1 && choice <= 15)
-                {
-                    switch (choice)
+                case 1:
+                    MergeMetaFiles("vehicles");
+                    break;
+                case 2:
+                    MergeMetaFiles("carcols");
+                    break;
+                case 3:
+                    MergeMetaFiles("carvariations");
+                    break;
+                case 4:
+                    MergeMetaFiles("handling");
+                    break;
+                case 5:
+                    MergeMetaFiles("vehiclelayouts");
+                    break;
+                case 6:
+                    MergeMetaFiles("vehicles");
+                    MergeMetaFiles("carcols");
+                    MergeMetaFiles("carvariations");
+                    MergeMetaFiles("handling");
+                    MergeMetaFiles("vehiclelayouts");
+                    break;
+                case 7:
+                    dirPath = AskForPath("Caminho para o diretório");
+                    if (dirPath != null) ImportFilesFromDir("vehicles", dirPath);
+                    break;
+                case 8:
+                    dirPath = AskForPath("Caminho para o diretório");
+                    if (dirPath != null) ImportFilesFromDir("carcols", dirPath);
+                    break;
+                case 9:
+                    dirPath = AskForPath("Caminho para o diretório");
+                    if (dirPath != null) ImportFilesFromDir("carvariations", dirPath);
+                    break;
+                case 10:
+                    dirPath = AskForPath("Caminho para o diretório");
+                    if (dirPath != null) ImportFilesFromDir("handling", dirPath);
+                    break;
+                case 11:
+                    dirPath = AskForPath("Caminho para o diretório");
+                    if (dirPath != null) ImportFilesFromDir("vehiclelayouts", dirPath);
+                    break;
+                case 12:
+                    dirPath = AskForPath("Caminho para o diretório");
+                    if (dirPath != null)
                     {
-                        case 1: PerformMerge("vehicles"); break;
-                        case 2: PerformMerge("carcols"); break;
-                        case 3: PerformMerge("carvariations"); break;
-                        case 4: PerformMerge("handling"); break;
-                        case 5: PerformMerge("vehiclelayouts"); break;
-                        case 6:
-                            PerformMerge("vehicles");
-                            PerformMerge("carcols");
-                            PerformMerge("carvariations");
-                            PerformMerge("handling");
-                            PerformMerge("vehiclelayouts");
-                            break;
-                        case 7: ImportFiles("vehicles"); break;
-                        case 8: ImportFiles("carcols"); break;
-                        case 9: ImportFiles("carvariations"); break;
-                        case 10: ImportFiles("handling"); break;
-                        case 11: ImportFiles("vehiclelayouts"); break;
-                        case 12:
-                            ImportFiles("vehicles");
-                            ImportFiles("carcols");
-                            ImportFiles("carvariations");
-                            ImportFiles("handling");
-                            ImportFiles("vehiclelayouts");
-                            break;
-                        case 13: ImportByQuery(); break;
-                        case 14: ExtractModelNames(); break;
-                        case 15: Environment.Exit(0); break;
+                        ImportFilesFromDir("vehicles", dirPath);
+                        ImportFilesFromDir("carcols", dirPath);
+                        ImportFilesFromDir("carvariations", dirPath);
+                        ImportFilesFromDir("handling", dirPath);
+                        ImportFilesFromDir("vehiclelayouts", dirPath);
                     }
-                }
-                else
-                {
-                    WriteLineColor("Entrada inválida. Por favor, escolha um número entre 1 e 15.", ConsoleColor.Red);
-                }
+                    break;
+                case 13:
+                    ImportFileByQueryFromDir();
+                    break;
+                case 14:
+                    ExtractModelNamesFromVehiclesMeta();
+                    break;
+                case 15:
+                    Environment.Exit(0);
+                    break;
             }
         }
 
         /// <summary>
-        /// Invoca a função genérica de mesclagem para um tipo de meta específico.
+        /// Processo genérico para mesclar arquivos .meta.
         /// </summary>
-        private static void PerformMerge(string metaKey)
+        private static void MergeMetaFiles(string metaType)
         {
-            WriteLineColor($"Mesclando todos os arquivos {metaKey}.meta...", ConsoleColor.Cyan);
-            var config = MetaFileConfig[metaKey];
-            MergeMetaFiles($"{metaKey}_meta", $"output/{metaKey}.meta", config.RootName, config.ChildNodes);
-        }
+            PrintColor($"Mesclando todos os arquivos {metaType}.meta...", ConsoleColor.Cyan);
 
-        /// <summary>
-        /// Invoca a função genérica de importação para um tipo de meta específico.
-        /// </summary>
-        private static void ImportFiles(string metaKey)
-        {
-            WriteLineColor($"Importando todos os arquivos {metaKey}.meta...", ConsoleColor.Magenta);
-            Console.Write("Caminho para o diretório: ");
-            string sourceDir = Console.ReadLine();
-            ImportFromDirectory($"{metaKey}_meta", sourceDir, $"**/{metaKey}.meta");
-        }
+            string sourceDir = Path.Combine(GetDir(), $"{metaType}_meta");
+            string outputFile = Path.Combine(GetDir(), "output", $"{metaType}.meta");
+            string[] filesToMerge;
 
-        /// <summary>
-        /// Lógica genérica para mesclar arquivos XML.
-        /// </summary>
-        private static void MergeMetaFiles(string sourceFolder, string outputFile, string rootNodeName, string[] nodesToMerge)
-        {
             try
             {
-                var files = Directory.GetFiles(sourceFolder, "*.meta");
-                if (files.Length == 0)
-                {
-                    WriteLineColor($"Nenhum arquivo encontrado em '{sourceFolder}'.", ConsoleColor.Yellow);
-                    return;
-                }
+                filesToMerge = Directory.GetFiles(sourceDir, "*.meta", SearchOption.TopDirectoryOnly);
+            }
+            catch (Exception ex)
+            {
+                PrintColor($"Erro ao ler o diretório {sourceDir}: {ex.Message}", ConsoleColor.Red);
+                return;
+            }
 
-                XDocument baseDoc = XDocument.Load(files[0]);
-                XElement root = baseDoc.Element(rootNodeName);
+
+            if (filesToMerge.Length == 0)
+            {
+                PrintColor($"Não foram encontrados arquivos no caminho fornecido: {sourceDir}", ConsoleColor.Yellow);
+                return;
+            }
+
+            File.WriteAllText(Path.Combine(GetDir(), "errors.txt"), string.Empty);
+
+            try
+            {
+                XDocument baseDoc = XDocument.Load(filesToMerge[0]);
+                XElement root = baseDoc.Root;
 
                 if (root == null)
                 {
-                    WriteLineColor($"Erro: O nó raiz '{rootNodeName}' não foi encontrado no arquivo base {files[0]}.", ConsoleColor.Red);
+                    PrintColor($"O arquivo '{filesToMerge[0]}' não é um XML válido ou está vazio.", ConsoleColor.Red);
                     return;
                 }
 
-                for (int i = 1; i < files.Length; i++)
+                // Loop através dos outros arquivos para mesclar
+                for (int i = 1; i < filesToMerge.Length; i++)
                 {
                     try
                     {
-                        XDocument currentDoc = XDocument.Load(files[i]);
-                        foreach (var nodeName in nodesToMerge)
-                        {
-                            var baseNodeContainer = root.Element(nodeName);
-                            if (baseNodeContainer == null)
-                            {
-                                // Se o contêiner não existe no arquivo base, cria-o.
-                                baseNodeContainer = new XElement(nodeName);
-                                root.Add(baseNodeContainer);
-                            }
+                        XDocument currentDoc = XDocument.Load(filesToMerge[i]);
+                        if (currentDoc.Root == null) continue;
 
-                            // Adiciona todos os elementos filhos do nó correspondente no arquivo atual.
-                            var itemsToAdd = currentDoc.Descendants(nodeName).Elements();
-                            baseNodeContainer.Add(itemsToAdd);
+                        // Itera sobre os nomes dos elementos alvo para o tipo de meta atual.
+                        foreach (var targetNodeName in MergeTargets[metaType])
+                        {
+                            var targetNode = root.Element(targetNodeName);
+                            var sourceNodes = currentDoc.Root.Element(targetNodeName)?.Elements("Item");
+
+                            if (sourceNodes != null)
+                            {
+                                // Se o nó de destino não existir no documento base, cria-o.
+                                if (targetNode == null)
+                                {
+                                    targetNode = new XElement(targetNodeName);
+                                    root.Add(targetNode);
+                                }
+                                targetNode.Add(sourceNodes);
+                            }
                         }
                     }
                     catch (Exception ex)
                     {
-                        string errorMsg = $"Erro ao processar o arquivo {files[i]}: {ex.Message}";
-                        WriteLineColor(errorMsg, ConsoleColor.Red);
-                        File.AppendAllText("errors.txt", errorMsg + Environment.NewLine);
+                        string errorMsg = $"Ocorreu um erro no arquivo {Path.GetFileName(filesToMerge[i])}\n{ex}\n\n";
+                        PrintColor(errorMsg, ConsoleColor.Red);
+                        File.AppendAllText(Path.Combine(GetDir(), "errors.txt"), errorMsg);
                     }
                 }
 
-                // Remove nós vazios que podem ter sido criados
-                foreach (var nodeName in nodesToMerge)
+                // Garante que os nós de destino existam, mesmo que vazios.
+                foreach (var targetNodeName in MergeTargets[metaType])
                 {
-                    var container = root.Element(nodeName);
-                    if (container != null && !container.HasElements)
+                    if (root.Element(targetNodeName) == null)
                     {
-                        container.Remove();
+                        root.Add(new XElement(targetNodeName));
                     }
                 }
 
-                baseDoc.Save(outputFile);
-                WriteLineColor($"Mesclagem de '{outputFile}' concluída com sucesso!", ConsoleColor.Green);
+                // Salva o XML mesclado com formatação e sem a declaração XML.
+                var settings = new System.Xml.XmlWriterSettings
+                {
+                    OmitXmlDeclaration = true,
+                    Indent = true,
+                    Encoding = new UTF8Encoding(false) // UTF-8 without BOM
+                };
+
+                using (var writer = System.Xml.XmlWriter.Create(outputFile, settings))
+                {
+                    baseDoc.Save(writer);
+                }
+
+                PrintColor($"Mesclagem de todos os arquivos {metaType}.meta concluída!", ConsoleColor.Green);
             }
             catch (Exception ex)
             {
-                string errorMsg = $"Um erro fatal ocorreu durante a mesclagem para {outputFile}: {ex.Message}";
-                WriteLineColor(errorMsg, ConsoleColor.Red);
-                File.AppendAllText("errors.txt", errorMsg + Environment.NewLine);
+                string errorMsg = $"Ocorreu um erro crítico ao processar o arquivo {Path.GetFileName(filesToMerge[0])}\n{ex}\n\n";
+                PrintColor(errorMsg, ConsoleColor.Red);
+                File.AppendAllText(Path.Combine(GetDir(), "errors.txt"), errorMsg);
             }
         }
 
         /// <summary>
-        /// Lógica genérica para importar arquivos de um diretório de origem.
+        /// Extrai todos os <modelName> dos arquivos em vehicles_meta.
         /// </summary>
-        private static void ImportFromDirectory(string destFolder, string sourceDir, string searchPattern)
+        private static void ExtractModelNamesFromVehiclesMeta()
         {
+            PrintColor("Extraindo nomes de modelo dos arquivos vehicles.meta...", ConsoleColor.Cyan);
+
+            string sourceDir = Path.Combine(GetDir(), "vehicles_meta");
+            string outputFile = Path.Combine(GetDir(), "output", "exportedModelNames.txt");
+
             if (!Directory.Exists(sourceDir))
             {
-                WriteLineColor("O diretório de origem não existe!", ConsoleColor.Red);
+                PrintColor($"Diretório de origem não encontrado: {sourceDir}", ConsoleColor.Red);
                 return;
             }
+
+            var files = Directory.GetFiles(sourceDir, "*.meta");
+            if (files.Length == 0)
+            {
+                PrintColor($"Nenhum arquivo encontrado em {sourceDir}", ConsoleColor.Yellow);
+                return;
+            }
+
+            var modelNames = new List<string>();
+            foreach (var file in files)
+            {
+                try
+                {
+                    XDocument doc = XDocument.Load(file);
+                    var names = doc.Descendants("Item")
+                                   .Elements("modelName")
+                                   .Select(el => el.Value);
+                    modelNames.AddRange(names);
+                }
+                catch (Exception ex)
+                {
+                    PrintColor($"Erro ao analisar {Path.GetFileName(file)}: {ex.Message}", ConsoleColor.Red);
+                }
+            }
+
             try
             {
-                var files = Directory.GetFiles(sourceDir, Path.GetFileName(searchPattern), SearchOption.AllDirectories);
-                int count = 0;
-                foreach (var file in files)
-                {
-                    string destFileName = Path.Combine(destFolder, $"{Path.GetFileNameWithoutExtension(destFolder)}{count++}.meta");
-                    File.Copy(file, destFileName, true);
-                }
-                WriteLineColor($"{count} arquivo(s) importado(s) para '{destFolder}' com sucesso.", ConsoleColor.Magenta);
+                File.WriteAllLines(outputFile, modelNames.Distinct());
+                PrintColor("Extração de nomes de modelo dos arquivos vehicles.meta concluída!", ConsoleColor.Green);
             }
             catch (Exception ex)
             {
-                WriteLineColor($"Erro durante a importação: {ex.Message}", ConsoleColor.Red);
+                PrintColor($"Erro ao escrever no arquivo de saída {outputFile}: {ex.Message}", ConsoleColor.Red);
             }
         }
 
         /// <summary>
-        /// Importa arquivos com base em uma consulta de pesquisa personalizada.
+        /// Importa arquivos .meta de um diretório de origem para o diretório de trabalho.
         /// </summary>
-        private static void ImportByQuery()
+        private static void ImportFilesFromDir(string metaType, string sourceDirectory)
         {
-            Console.Write("Caminho para o diretório de origem: ");
-            string sourceDir = Console.ReadLine();
-            if (!Directory.Exists(sourceDir))
-            {
-                WriteLineColor("O diretório de origem não existe!", ConsoleColor.Red);
-                return;
-            }
+            PrintColor($"Importando todos os arquivos {metaType}.meta...", ConsoleColor.Magenta);
 
-            Console.Write("Caminho para o diretório de destino: ");
-            string destDir = Console.ReadLine();
-            if (!Directory.Exists(destDir))
+            try
             {
-                WriteLineColor("O diretório de destino não existe! Crie-o primeiro.", ConsoleColor.Red);
-                return;
-            }
+                string targetDir = Path.Combine(GetDir(), $"{metaType}_meta");
+                var files = Directory.GetFiles(sourceDirectory, $"{metaType}.meta", SearchOption.AllDirectories);
 
-            Console.Write("Consulta de pesquisa (ex: *.meta ou handling*): ");
+                for (int i = 0; i < files.Length; i++)
+                {
+                    string sourceFile = files[i];
+                    string destFile = Path.Combine(targetDir, $"{metaType}{i}.meta");
+                    File.Copy(sourceFile, destFile, true);
+                }
+                PrintColor($"Importação de todos os arquivos {metaType}.meta concluída! Foram encontrados {files.Length} arquivo(s).", ConsoleColor.Magenta);
+            }
+            catch (Exception ex)
+            {
+                PrintColor($"Erro durante a importação: {ex.Message}", ConsoleColor.Red);
+            }
+        }
+
+        /// <summary>
+        /// Importa arquivos com base em um padrão de busca (glob).
+        /// </summary>
+        private static void ImportFileByQueryFromDir()
+        {
+            string sourceDir = AskForPath("Caminho para o diretório");
+            if (sourceDir == null) return;
+
+            string targetDir = AskForPath("Caminho para o diretório onde salvar os arquivos");
+            if (targetDir == null) return;
+
+            Console.Write("Consulta de pesquisa (ex: **/*.meta): ");
             string query = Console.ReadLine();
+
+            if (string.IsNullOrWhiteSpace(query))
+            {
+                PrintColor("A consulta de pesquisa não pode estar vazia.", ConsoleColor.Red);
+                return;
+            }
 
             try
             {
                 var files = Directory.GetFiles(sourceDir, query, SearchOption.AllDirectories);
-                int count = 0;
                 foreach (var file in files)
                 {
-                    string destFileName = Path.Combine(destDir, Path.GetFileName(file));
-                    File.Copy(file, destFileName, true);
-                    count++;
+                    string fileName = Path.GetFileName(file);
+                    string destPath = Path.Combine(targetDir, fileName);
+                    try
+                    {
+                        File.Copy(file, destPath, true);
+                    }
+                    catch (Exception ex)
+                    {
+                        PrintColor($"Ocorreu um erro ao copiar o arquivo:\nDe: {file}\nPara: {destPath}\n{ex.Message}", ConsoleColor.Red);
+                    }
                 }
-                WriteLineColor($"{count} arquivo(s) correspondente(s) a '{query}' importado(s) para '{destDir}' com sucesso.", ConsoleColor.Magenta);
+                PrintColor($"Importação de todos os arquivos pela consulta: {query} concluída! Foram encontrados {files.Length} arquivo(s).", ConsoleColor.Magenta);
             }
             catch (Exception ex)
             {
-                WriteLineColor($"Erro durante a importação: {ex.Message}", ConsoleColor.Red);
+                PrintColor($"Ocorreu um erro durante a busca pelos arquivos: {ex.Message}", ConsoleColor.Red);
+            }
+        }
+
+        #region Funções Auxiliares
+
+        /// <summary>
+        /// Obtém o diretório base da aplicação.
+        /// </summary>
+        private static string GetDir()
+        {
+            return AppDomain.CurrentDomain.BaseDirectory;
+        }
+
+        /// <summary>
+        /// Solicita um caminho de diretório ao usuário e valida sua existência.
+        /// </summary>
+        private static string AskForPath(string prompt)
+        {
+            Console.Write($"{prompt}: ");
+            string path = Console.ReadLine();
+            if (Directory.Exists(path))
+            {
+                return path;
+            }
+            else
+            {
+                PrintColor("O diretório não existe!", ConsoleColor.Red);
+                return null;
             }
         }
 
         /// <summary>
-        /// Extrai todos os nós <modelName> de todos os arquivos em vehicles_meta.
+        /// Imprime uma mensagem no console com uma cor específica.
         /// </summary>
-        private static void ExtractModelNames()
-        {
-            WriteLineColor("Extraindo nomes de modelos de vehicles.meta...", ConsoleColor.Cyan);
-            const string sourceFolder = "vehicles_meta";
-            try
-            {
-                var files = Directory.GetFiles(sourceFolder, "*.meta");
-                if (files.Length == 0)
-                {
-                    WriteLineColor($"Nenhum arquivo encontrado em '{sourceFolder}'.", ConsoleColor.Yellow);
-                    return;
-                }
-
-                var modelNames = new List<string>();
-                foreach (var file in files)
-                {
-                    try
-                    {
-                        XDocument doc = XDocument.Load(file);
-                        var names = doc.Descendants("modelName").Select(el => el.Value);
-                        modelNames.AddRange(names);
-                    }
-                    catch (Exception ex)
-                    {
-                        string errorMsg = $"Erro ao processar o arquivo {file}: {ex.Message}";
-                        WriteLineColor(errorMsg, ConsoleColor.Red);
-                        File.AppendAllText("errors.txt", errorMsg + Environment.NewLine);
-                    }
-                }
-
-                string outputPath = "output/exportedModelNames.txt";
-                File.WriteAllLines(outputPath, modelNames.Distinct()); // Usa Distinct para evitar nomes duplicados
-                WriteLineColor($"Extração de nomes de modelos concluída! {modelNames.Count} nomes encontrados. Salvo em '{outputPath}'", ConsoleColor.Green);
-            }
-            catch (Exception ex)
-            {
-                WriteLineColor($"Ocorreu um erro durante a extração: {ex.Message}", ConsoleColor.Red);
-            }
-        }
-
-        #region Funções Auxiliares de Console
-        private static void WriteLineColor(string text, ConsoleColor color)
+        private static void PrintColor(string message, ConsoleColor color, bool newLine = true)
         {
             Console.ForegroundColor = color;
-            Console.WriteLine(text);
+            if (newLine)
+            {
+                Console.WriteLine(message);
+            }
+            else
+            {
+                Console.Write(message);
+            }
             Console.ResetColor();
         }
 
-        private static void WriteColor(string text, ConsoleColor color)
-        {
-            Console.ForegroundColor = color;
-            Console.Write(text);
-            Console.ResetColor();
-        }
-
-        private static void Write(string text)
-        {
-            Console.Write(text);
-        }
         #endregion
     }
 }
+
+
