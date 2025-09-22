@@ -328,7 +328,7 @@ namespace mmVehiclesMetaMerger
             {
                 if (modelNames.Any())
                 {
-                    File.WriteAllLines(outputFile, modelNames.Distinct());
+                    File.WriteAllLines(outputFile, modelNames.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n => n));
                     PrintColor("Extração de nomes de modelo dos arquivos vehicles.meta concluída!", ConsoleColor.Green);
                 }
                 else
@@ -373,7 +373,7 @@ namespace mmVehiclesMetaMerger
         /// </summary>
         private static void ImportFileByQueryFromDir()
         {
-            string sourceDir = AskForPath("Caminho para o diretório");
+            string sourceDir = AskForPath("Caminho para o diretório de origem");
             if (sourceDir == null) return;
 
             string targetDir = AskForPath("Caminho para o diretório onde salvar os arquivos");
@@ -394,6 +394,7 @@ namespace mmVehiclesMetaMerger
                 string searchPattern = Path.GetFileName(query);
                 var files = Directory.GetFiles(sourceDir, searchPattern, SearchOption.AllDirectories);
 
+                int filesCopied = 0;
                 foreach (var file in files)
                 {
                     string fileName = Path.GetFileName(file);
@@ -401,13 +402,14 @@ namespace mmVehiclesMetaMerger
                     try
                     {
                         File.Copy(file, destPath, true);
+                        filesCopied++;
                     }
                     catch (Exception ex)
                     {
                         PrintColor($"Ocorreu um erro ao copiar o arquivo:\nDe: {file}\nPara: {destPath}\n{ex.Message}", ConsoleColor.Red);
                     }
                 }
-                PrintColor($"Importação de todos os arquivos pela consulta: {query} concluída! Foram encontrados {files.Length} arquivo(s).", ConsoleColor.Magenta);
+                PrintColor($"Importação de todos os arquivos pela consulta: {query} concluída! Foram copiados {filesCopied} arquivo(s).", ConsoleColor.Magenta);
             }
             catch (Exception ex)
             {
@@ -418,7 +420,7 @@ namespace mmVehiclesMetaMerger
         #region Funções Auxiliares
 
         /// <summary>
-        /// Tenta analisar um arquivo XML, corrigindo-o se necessário.
+        /// Tenta analisar um arquivo XML. Se falhar, tenta uma correção robusta e analisa novamente.
         /// </summary>
         private static XDocument TryFixAndParseXml(string filePath)
         {
@@ -428,39 +430,58 @@ namespace mmVehiclesMetaMerger
                 string fileContent = File.ReadAllText(filePath);
                 string sanitizedContent = SanitizeXmlString(fileContent);
 
-                // Tenta analisar diretamente primeiro
+                // Tentativa 1: Analisar diretamente o XML. A opção SetLineInfo ajuda a obter a linha do erro.
                 try
                 {
-                    return XDocument.Parse(sanitizedContent, LoadOptions.None);
+                    return XDocument.Parse(sanitizedContent, LoadOptions.SetLineInfo);
                 }
-                catch (System.Xml.XmlException)
+                catch (System.Xml.XmlException ex)
                 {
-                    // Se falhar, tenta corrigir com HtmlAgilityPack
-                    PrintColor($"Arquivo '{fileName}' parece malformado. Tentando corrigir...", ConsoleColor.Yellow);
+                    // Se falhar, inicia o processo de correção.
+                    PrintColor($"Arquivo '{fileName}' inválido (Linha {ex.LineNumber}): Tentando correção automática...", ConsoleColor.Yellow);
 
                     var hapDoc = new HtmlDocument();
+                    // Configurações agressivas para correção: consertar tags aninhadas e fechar tags automaticamente no final.
                     hapDoc.OptionFixNestedTags = true;
+                    hapDoc.OptionAutoCloseOnEnd = true;
                     hapDoc.OptionOutputAsXml = true;
+
                     hapDoc.LoadHtml(sanitizedContent);
 
-                    // Verifica se a correção gerou um documento válido
-                    if (hapDoc.DocumentNode != null && !hapDoc.DocumentNode.Descendants("#error").Any())
+                    // Verifica se a HAP encontrou erros graves que não pôde corrigir.
+                    // Ignoramos o erro "TagNotClosed" porque é exatamente isso que queremos que a HAP corrija.
+                    var unfixableErrors = hapDoc.ParseErrors.Where(e => e.Code != HtmlParseErrorCode.TagNotClosed);
+                    if (unfixableErrors.Any())
                     {
-                        using (var sw = new StringWriter())
-                        {
-                            hapDoc.Save(sw);
-                            string fixedXml = sw.ToString();
-                            PrintColor($"Arquivo '{fileName}' corrigido com sucesso.", ConsoleColor.Green);
-                            return XDocument.Parse(fixedXml, LoadOptions.None);
-                        }
-                    }
-                    else
-                    {
-                        // Se ainda houver erros, reporta
-                        var errors = hapDoc.ParseErrors.Select(e => $"  - {e.Reason} (Linha: {e.Line}, Código: {e.Code})");
-                        string errorMsg = $"Não foi possível corrigir o arquivo '{fileName}'. Erros encontrados:\n{string.Join("\n", errors)}\n\n";
+                        var errors = unfixableErrors.Select(e => $"  - {e.Reason} (Linha: {e.Line}, Código: {e.Code})");
+                        string errorMsg = $"Não foi possível corrigir o arquivo '{fileName}'. Erros graves encontrados:\n{string.Join("\n", errors)}\n\n";
                         PrintColor(errorMsg, ConsoleColor.Red);
                         File.AppendAllText(Path.Combine(GetDir(), "errors.txt"), errorMsg);
+                        return null;
+                    }
+
+                    string fixedXml;
+                    using (var sw = new StringWriter())
+                    {
+                        hapDoc.Save(sw);
+                        fixedXml = sw.ToString();
+                    }
+
+                    // Tentativa 2: Analisar o XML que foi corrigido pela HAP.
+                    try
+                    {
+                        var correctedDoc = XDocument.Parse(fixedXml, LoadOptions.None);
+                        PrintColor($"Arquivo '{fileName}' foi corrigido e analisado com sucesso!", ConsoleColor.Green);
+                        return correctedDoc;
+                    }
+                    catch (System.Xml.XmlException finalEx)
+                    {
+                        // Se mesmo após a correção o XML ainda for inválido, o problema é mais sério.
+                        string failedFilePath = Path.Combine(GetDir(), "output", $"FAILED_{fileName}");
+                        string errorMsg = $"A correção automática para '{fileName}' falhou. O arquivo permanece inválido.\n  Erro final: {finalEx.Message} (Linha: {finalEx.LineNumber})\n  Uma tentativa de correção foi salva em: {failedFilePath}\n\n";
+                        PrintColor(errorMsg, ConsoleColor.Red);
+                        File.AppendAllText(Path.Combine(GetDir(), "errors.txt"), errorMsg);
+                        File.WriteAllText(failedFilePath, fixedXml); // Salva a tentativa de correção para depuração
                         return null;
                     }
                 }
@@ -488,14 +509,14 @@ namespace mmVehiclesMetaMerger
         private static string AskForPath(string prompt)
         {
             Console.Write($"{prompt}: ");
-            string path = Console.ReadLine();
-            if (Directory.Exists(path))
+            string path = Console.ReadLine()?.Trim('"'); // Remove aspas que podem ser coladas
+            if (!string.IsNullOrEmpty(path) && Directory.Exists(path))
             {
                 return path;
             }
             else
             {
-                PrintColor("O diretório não existe!", ConsoleColor.Red);
+                PrintColor("O diretório não existe ou o caminho está vazio!", ConsoleColor.Red);
                 return null;
             }
         }
@@ -557,4 +578,5 @@ namespace mmVehiclesMetaMerger
         #endregion
     }
 }
+
 
