@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Xml.Linq;
+using HtmlAgilityPack; // Adicionado para correção de XML
 
 namespace mmVehiclesMetaMerger
 {
@@ -218,80 +219,72 @@ namespace mmVehiclesMetaMerger
 
             File.WriteAllText(Path.Combine(GetDir(), "errors.txt"), string.Empty);
 
-            try
+            XDocument baseDoc = TryFixAndParseXml(filesToMerge[0]);
+            if (baseDoc == null || baseDoc.Root == null)
             {
-                XDocument baseDoc = XDocument.Load(filesToMerge[0]);
-                XElement root = baseDoc.Root;
+                PrintColor($"O arquivo base '{Path.GetFileName(filesToMerge[0])}' não pôde ser analisado ou está vazio.", ConsoleColor.Red);
+                return;
+            }
+            XElement root = baseDoc.Root;
 
-                if (root == null)
+
+            // Loop através dos outros arquivos para mesclar
+            for (int i = 1; i < filesToMerge.Length; i++)
+            {
+                XDocument currentDoc = TryFixAndParseXml(filesToMerge[i]);
+                if (currentDoc == null || currentDoc.Root == null)
                 {
-                    PrintColor($"O arquivo '{filesToMerge[0]}' não é um XML válido ou está vazio.", ConsoleColor.Red);
-                    return;
+                    // O erro já foi logado dentro de TryFixAndParseXml
+                    continue;
                 }
 
-                // Loop através dos outros arquivos para mesclar
-                for (int i = 1; i < filesToMerge.Length; i++)
-                {
-                    try
-                    {
-                        XDocument currentDoc = XDocument.Load(filesToMerge[i]);
-                        if (currentDoc.Root == null) continue;
-
-                        // Itera sobre os nomes dos elementos alvo para o tipo de meta atual.
-                        foreach (var targetNodeName in MergeTargets[metaType])
-                        {
-                            var targetNode = root.Element(targetNodeName);
-                            var sourceNodes = currentDoc.Root.Element(targetNodeName)?.Elements("Item");
-
-                            if (sourceNodes != null)
-                            {
-                                // Se o nó de destino não existir no documento base, cria-o.
-                                if (targetNode == null)
-                                {
-                                    targetNode = new XElement(targetNodeName);
-                                    root.Add(targetNode);
-                                }
-                                targetNode.Add(sourceNodes);
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        string errorMsg = $"Ocorreu um erro no arquivo {Path.GetFileName(filesToMerge[i])}\n{ex}\n\n";
-                        PrintColor(errorMsg, ConsoleColor.Red);
-                        File.AppendAllText(Path.Combine(GetDir(), "errors.txt"), errorMsg);
-                    }
-                }
-
-                // Garante que os nós de destino existam, mesmo que vazios.
+                // Itera sobre os nomes dos elementos alvo para o tipo de meta atual.
                 foreach (var targetNodeName in MergeTargets[metaType])
                 {
-                    if (root.Element(targetNodeName) == null)
+                    var targetNode = root.Element(targetNodeName);
+                    var sourceNodes = currentDoc.Root.Element(targetNodeName)?.Elements("Item");
+
+                    if (sourceNodes != null && sourceNodes.Any())
                     {
-                        root.Add(new XElement(targetNodeName));
+                        // Se o nó de destino não existir no documento base, cria-o.
+                        if (targetNode == null)
+                        {
+                            targetNode = new XElement(targetNodeName);
+                            root.Add(targetNode);
+                        }
+                        targetNode.Add(sourceNodes);
                     }
                 }
+            }
 
-                // Salva o XML mesclado com formatação e sem a declaração XML.
-                var settings = new System.Xml.XmlWriterSettings
+            // Garante que os nós de destino existam, mesmo que vazios.
+            foreach (var targetNodeName in MergeTargets[metaType])
+            {
+                if (root.Element(targetNodeName) == null)
                 {
-                    OmitXmlDeclaration = true,
-                    Indent = true,
-                    Encoding = new UTF8Encoding(false) // UTF-8 without BOM
-                };
+                    root.Add(new XElement(targetNodeName));
+                }
+            }
 
+            // Salva o XML mesclado com formatação e sem a declaração XML.
+            var settings = new System.Xml.XmlWriterSettings
+            {
+                OmitXmlDeclaration = true,
+                Indent = true,
+                Encoding = new UTF8Encoding(false) // UTF-8 without BOM
+            };
+
+            try
+            {
                 using (var writer = System.Xml.XmlWriter.Create(outputFile, settings))
                 {
                     baseDoc.Save(writer);
                 }
-
                 PrintColor($"Mesclagem de todos os arquivos {metaType}.meta concluída!", ConsoleColor.Green);
             }
             catch (Exception ex)
             {
-                string errorMsg = $"Ocorreu um erro crítico ao processar o arquivo {Path.GetFileName(filesToMerge[0])}\n{ex}\n\n";
-                PrintColor(errorMsg, ConsoleColor.Red);
-                File.AppendAllText(Path.Combine(GetDir(), "errors.txt"), errorMsg);
+                PrintColor($"Erro ao salvar o arquivo final {outputFile}: {ex.Message}", ConsoleColor.Red);
             }
         }
 
@@ -321,24 +314,27 @@ namespace mmVehiclesMetaMerger
             var modelNames = new List<string>();
             foreach (var file in files)
             {
-                try
+                XDocument doc = TryFixAndParseXml(file);
+                if (doc != null)
                 {
-                    XDocument doc = XDocument.Load(file);
                     var names = doc.Descendants("Item")
                                    .Elements("modelName")
                                    .Select(el => el.Value);
                     modelNames.AddRange(names);
                 }
-                catch (Exception ex)
-                {
-                    PrintColor($"Erro ao analisar {Path.GetFileName(file)}: {ex.Message}", ConsoleColor.Red);
-                }
             }
 
             try
             {
-                File.WriteAllLines(outputFile, modelNames.Distinct());
-                PrintColor("Extração de nomes de modelo dos arquivos vehicles.meta concluída!", ConsoleColor.Green);
+                if (modelNames.Any())
+                {
+                    File.WriteAllLines(outputFile, modelNames.Distinct());
+                    PrintColor("Extração de nomes de modelo dos arquivos vehicles.meta concluída!", ConsoleColor.Green);
+                }
+                else
+                {
+                    PrintColor("Nenhum nome de modelo foi encontrado nos arquivos.", ConsoleColor.Yellow);
+                }
             }
             catch (Exception ex)
             {
@@ -394,7 +390,10 @@ namespace mmVehiclesMetaMerger
 
             try
             {
-                var files = Directory.GetFiles(sourceDir, query, SearchOption.AllDirectories);
+                // Simula a busca recursiva de '**/padrão'
+                string searchPattern = Path.GetFileName(query);
+                var files = Directory.GetFiles(sourceDir, searchPattern, SearchOption.AllDirectories);
+
                 foreach (var file in files)
                 {
                     string fileName = Path.GetFileName(file);
@@ -417,6 +416,63 @@ namespace mmVehiclesMetaMerger
         }
 
         #region Funções Auxiliares
+
+        /// <summary>
+        /// Tenta analisar um arquivo XML, corrigindo-o se necessário.
+        /// </summary>
+        private static XDocument TryFixAndParseXml(string filePath)
+        {
+            string fileName = Path.GetFileName(filePath);
+            try
+            {
+                string fileContent = File.ReadAllText(filePath);
+                string sanitizedContent = SanitizeXmlString(fileContent);
+
+                // Tenta analisar diretamente primeiro
+                try
+                {
+                    return XDocument.Parse(sanitizedContent, LoadOptions.None);
+                }
+                catch (System.Xml.XmlException)
+                {
+                    // Se falhar, tenta corrigir com HtmlAgilityPack
+                    PrintColor($"Arquivo '{fileName}' parece malformado. Tentando corrigir...", ConsoleColor.Yellow);
+
+                    var hapDoc = new HtmlDocument();
+                    hapDoc.OptionFixNestedTags = true;
+                    hapDoc.OptionOutputAsXml = true;
+                    hapDoc.LoadHtml(sanitizedContent);
+
+                    // Verifica se a correção gerou um documento válido
+                    if (hapDoc.DocumentNode != null && !hapDoc.DocumentNode.Descendants("#error").Any())
+                    {
+                        using (var sw = new StringWriter())
+                        {
+                            hapDoc.Save(sw);
+                            string fixedXml = sw.ToString();
+                            PrintColor($"Arquivo '{fileName}' corrigido com sucesso.", ConsoleColor.Green);
+                            return XDocument.Parse(fixedXml, LoadOptions.None);
+                        }
+                    }
+                    else
+                    {
+                        // Se ainda houver erros, reporta
+                        var errors = hapDoc.ParseErrors.Select(e => $"  - {e.Reason} (Linha: {e.Line}, Código: {e.Code})");
+                        string errorMsg = $"Não foi possível corrigir o arquivo '{fileName}'. Erros encontrados:\n{string.Join("\n", errors)}\n\n";
+                        PrintColor(errorMsg, ConsoleColor.Red);
+                        File.AppendAllText(Path.Combine(GetDir(), "errors.txt"), errorMsg);
+                        return null;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                string errorMsg = $"Ocorreu um erro crítico ao processar o arquivo {fileName}\n{ex}\n\n";
+                PrintColor(errorMsg, ConsoleColor.Red);
+                File.AppendAllText(Path.Combine(GetDir(), "errors.txt"), errorMsg);
+                return null;
+            }
+        }
 
         /// <summary>
         /// Obtém o diretório base da aplicação.
@@ -461,8 +517,44 @@ namespace mmVehiclesMetaMerger
             Console.ResetColor();
         }
 
+        /// <summary>
+        /// Remove caracteres inválidos de uma string XML.
+        /// </summary>
+        private static string SanitizeXmlString(string xml)
+        {
+            if (string.IsNullOrEmpty(xml))
+            {
+                return xml;
+            }
+
+            StringBuilder buffer = new StringBuilder(xml.Length);
+            foreach (char c in xml)
+            {
+                if (IsLegalXmlChar(c))
+                {
+                    buffer.Append(c);
+                }
+            }
+            return buffer.ToString();
+        }
+
+        /// <summary>
+        /// Verifica se um caractere é válido para XML 1.0.
+        /// </summary>
+        private static bool IsLegalXmlChar(int character)
+        {
+            return
+            (
+                 character == 0x9 /* == '\t' */   ||
+                 character == 0xA /* == '\n' */   ||
+                 character == 0xD /* == '\r' */   ||
+                (character >= 0x20 && character <= 0xD7FF) ||
+                (character >= 0xE000 && character <= 0xFFFD) ||
+                (character >= 0x10000 && character <= 0x10FFFF)
+            );
+        }
+
         #endregion
     }
 }
-
 
